@@ -13,8 +13,8 @@ public static class GoldbachCometGap {
     /// as 3+7 and 5+5, and so on.
     /// </summary>
     public static void Execute() {
-        // can be up to (uint)Array.MaxLength * 2, but then requires sieve and main add loop
-        // can be up to uint.MaxValue - 65536*2 and not require overflow checking in sieve and main add loop
+        // can be up to (uint)Array.MaxLength * 2, but then requires overflow check in sieve and main add loop
+        // can be up to uint.MaxValue - 65536*2 and not require overflow check in sieve and main add loop
         uint max = uint.MaxValue - 65536 * 2; // estimated run time: 93 days
         Console.WriteLine($"max={max:N0}");
         uint maxHeadroom = uint.MaxValue - max; // ca-ca-catch the wave
