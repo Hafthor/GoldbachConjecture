@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Diagnostics;
 using System.IO.Compression;
 
@@ -15,7 +16,8 @@ public static class GoldbachCometGap {
     public static void Execute() {
         // can be up to (uint)Array.MaxLength * 2, but then requires overflow check in sieve and main add loop
         // can be up to uint.MaxValue - 65536*2 and not require overflow check in sieve and main add loop
-        uint max = uint.MaxValue - 65536 * 2; // estimated run time: 93 days
+        // uint max = uint.MaxValue - 65536 * 2; // estimated run time: 93 days
+        uint max = 1_000_000_000; // estimated run time: 5.7 days
         Console.WriteLine($"max={max:N0}");
         uint maxHeadroom = uint.MaxValue - max; // ca-ca-catch the wave
         int iterLimit = (int)Math.Sqrt(max);
@@ -65,7 +67,8 @@ public static class GoldbachCometGap {
 
         // verify here: https://t5k.org/nthprime/index.php#nth
         string[] ordinalSuffixes = ["th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th"];
-        Console.WriteLine($"Sanity check: {primes.Count:N0}{ordinalSuffixes[primes.Count % 10]} prime = {primes[^1]:N0}.");
+        Console.WriteLine(
+            $"Sanity check: {primes.Count:N0}{ordinalSuffixes[primes.Count % 10]} prime = {primes[^1]:N0}.");
 
         uint[] evenCounts = new uint[(max >> 1) + 1];
         evenCounts[2]++; // for 4 (which can only be 2+2, so one combination)
@@ -214,7 +217,106 @@ public static class GoldbachCometGap {
         for (int i = 0; i <= highest; i++)
             sw.WriteLine(evenCounts[i]);
     }
-    
+
+    public static void ExecuteNew() {
+        List<uint> primes = GetPrimes();
+        uint rangeStart = 0, rangeIncrement = 65536;
+        List<bool> found = [];
+        uint[] rangeEvenCounts = new uint[rangeIncrement >> 1];
+        int firstMissingCount = 0;
+        for (;;) {
+            uint rangeEnd = rangeStart + rangeIncrement - 1;
+            if (!ReadRange(rangeStart, rangeEnd, rangeEvenCounts))
+                ComputeRange(primes, rangeStart, rangeEnd, rangeEvenCounts);
+            firstMissingCount = UpdateFound(found, rangeEvenCounts, firstMissingCount);
+            Console.WriteLine($" First missing count = {firstMissingCount:N0}, highest count = {found.Count - 1:N0}.");
+            rangeStart += rangeIncrement;
+            if (rangeStart == 0) break;
+            Array.Clear(rangeEvenCounts);
+        }
+
+        // returns all primes in the uint space
+        static List<uint> GetPrimes() {
+            Console.Write("Finding primes...");
+            List<uint> primes = [2];
+            // uint.MaxValue is 4,294,967,295 which is composite
+            // int.MaxValue is 2,147,483,647 (x2 + 1) = 4,294,967,295
+            BitArray isOddComposite = new(int.MaxValue);
+            isOddComposite[int.MaxValue - 1] = true; // mark 4,294,967,293 (2^32-3) as composite
+            uint sqrtLimit = 65536;
+            for (uint n = 3; n < sqrtLimit; n += 2)
+                if (!isOddComposite[(int)(n >> 1)]) {
+                    primes.Add(n);
+                    for (uint add = n << 1, comp = n + add; comp > add && comp != uint.MaxValue; comp += add)
+                        isOddComposite[(int)(comp >> 1)] = true;
+                }
+
+            Console.Write(' ');
+            for (uint n = sqrtLimit + 1; n < uint.MaxValue; n += 2)
+                if (!isOddComposite[(int)(n >> 1)])
+                    primes.Add(n);
+
+            Console.WriteLine($"done. Found {primes.Count:N0} primes. Highest prime is {primes[^1]:N0}.");
+            return primes;
+        }
+
+        static bool ReadRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+            string fileName = $"counts-{rangeStart}-{rangeEnd}.gz";
+            if (!File.Exists(fileName)) return false;
+            using FileStream file = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using GZipStream gzip = new(file, CompressionMode.Decompress);
+            using StreamReader sr = new(gzip);
+            for (int i = 0; i < rangeEvenCounts.Length; i++) {
+                string line = sr.ReadLine();
+                if (line == null) break;
+                rangeEvenCounts[i] = uint.Parse(line);
+            }
+            
+            Console.Write($"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] read from disk.");
+            return true;
+        }
+        
+        static void ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+            int pmax = primes.BinarySearch(rangeEnd >> 1);
+            if (pmax < 0) pmax = ~pmax;
+            int qmax = primes.BinarySearch(rangeEnd);
+            if (qmax < 0) qmax = ~qmax;
+            Parallel.For(1, pmax, pi => { // skip the first prime (2)
+                uint p = primes[pi];
+                int qi = rangeStart > p ? primes.BinarySearch(rangeStart - p) : 0;
+                if (qi < 0) qi = ~qi;
+                if (qi < pi) qi = pi;
+                for (; qi < qmax; qi++) {
+                    uint pq = p + primes[qi];
+                    if (pq < rangeStart) continue;
+                    if (pq > rangeEnd) break;
+                    Interlocked.Increment(ref rangeEvenCounts[(pq - rangeStart) >> 1]);
+                }
+            });
+
+            Console.Write($"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] computed");
+            using FileStream fs = new FileStream($"counts-{rangeStart}-{rangeEnd}.gz", FileMode.Create,
+                FileAccess.Write,
+                FileShare.None);
+            using GZipStream gz = new(fs, CompressionMode.Compress);
+            using StreamWriter sw = new(gz);
+            foreach (uint evenCount in rangeEvenCounts)
+                sw.WriteLine(evenCount);
+            Console.Write(" and saved.");
+        }
+
+        static int UpdateFound(List<bool> found, uint[] rangeEvenCounts, int prevFirstMissingCount) {
+            foreach (uint count in rangeEvenCounts) {
+                while (count >= found.Count) found.Add(false);
+                found[(int)count] = true;
+            }
+
+            while (prevFirstMissingCount < found.Count && found[prevFirstMissingCount])
+                prevFirstMissingCount++;
+            return prevFirstMissingCount;
+        }
+    }
+
     public static async Task ExecuteOld() {
         const string progressFile = "goldbach_progress.txt";
         const int max = 500_000_000;
