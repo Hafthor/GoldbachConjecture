@@ -228,8 +228,10 @@ public static class GoldbachCometGap {
             uint rangeEnd = rangeStart + rangeIncrement - 1;
             if (!ReadRange(rangeStart, rangeEnd, rangeEvenCounts))
                 ComputeRange(primes, rangeStart, rangeEnd, rangeEvenCounts);
-            firstMissingCount = UpdateFound(found, rangeEvenCounts, firstMissingCount);
-            Console.WriteLine($" First missing count = {firstMissingCount:N0}, highest count = {found.Count - 1:N0}.");
+            (firstMissingCount, int nextMissingCount, int missingCount) = UpdateFound(found, rangeEvenCounts, firstMissingCount);
+            double density = 1.0 - missingCount / ((double)found.Count - firstMissingCount);
+            Console.WriteLine(
+                $" First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
             rangeStart += rangeIncrement;
             if (rangeStart == 0) break;
             Array.Clear(rangeEvenCounts);
@@ -283,7 +285,7 @@ public static class GoldbachCometGap {
             if (qmax < 0) qmax = ~qmax;
             Parallel.For(1, pmax, pi => { // skip the first prime (2)
                 uint p = primes[pi];
-                int qi = rangeStart > p ? primes.BinarySearch(rangeStart - p) : 0;
+                int qi = rangeStart > p ? primes.BinarySearch(rangeStart - p) : 1; // skip the first prime (2)
                 if (qi < 0) qi = ~qi;
                 if (qi < pi) qi = pi;
                 for (; qi < qmax; qi++) {
@@ -305,15 +307,23 @@ public static class GoldbachCometGap {
             Console.Write(" and saved.");
         }
 
-        static int UpdateFound(List<bool> found, uint[] rangeEvenCounts, int prevFirstMissingCount) {
+        static (int, int, int) UpdateFound(List<bool> found, uint[] rangeEvenCounts, int prevFirstMissingCount) {
             foreach (uint count in rangeEvenCounts) {
-                while (count >= found.Count) found.Add(false);
-                found[(int)count] = true;
+                while (count > found.Count) found.Add(false);
+                if (count == found.Count) found.Add(true);
+                else found[(int)count] = true;
             }
 
             while (prevFirstMissingCount < found.Count && found[prevFirstMissingCount])
                 prevFirstMissingCount++;
-            return prevFirstMissingCount;
+            int nextMissingCount = prevFirstMissingCount + 1;
+            while (nextMissingCount < found.Count && found[nextMissingCount])
+                nextMissingCount++;
+            int missingCount = 1;
+            for (int i = nextMissingCount; i < found.Count; i++)
+                if (!found[i])
+                    missingCount++;
+            return (prevFirstMissingCount, nextMissingCount, missingCount);
         }
     }
 
