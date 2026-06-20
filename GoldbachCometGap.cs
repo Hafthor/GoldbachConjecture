@@ -25,17 +25,18 @@ public static class GoldbachCometGap {
                 Array.Clear(rangeEvenCounts);
                 uint rs = Interlocked.Add(ref rangeStart, rangeIncrement);
                 uint re = rs + rangeIncrement - 1;
-                if (!ReadRange(rs, re, rangeEvenCounts))
-                    ComputeRange(primes, rs, re, rangeEvenCounts);
+                string message = ReadRange(rs, re, rangeEvenCounts) ?? ComputeRange(primes, rs, re, rangeEvenCounts);
                 (int firstMissingCount, int nextMissingCount, int missingCount) =
                     UpdateFound(found, rangeEvenCounts, 0);
                 double density = 1.0 - missingCount / ((double)found.Count - firstMissingCount);
                 Console.WriteLine(
-                    $" First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
+                    $"{message} First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
             } finally {
                 ArrayPool<uint>.Shared.Return(rangeEvenCounts);
             }
         });
+        return;
+        
         // returns all primes in the uint space
         static List<uint> GetPrimes() {
             Console.Write("Finding primes...");
@@ -63,9 +64,9 @@ public static class GoldbachCometGap {
 
         static string FileNameForRange(uint rangeStart, uint rangeEnd) => $"counts-{rangeStart}-{rangeEnd}.gz";
 
-        static bool ReadRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+        static string ReadRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
             string fileName = FileNameForRange(rangeStart, rangeEnd);
-            if (!File.Exists(fileName)) return false;
+            if (!File.Exists(fileName)) return null;
             using FileStream file = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using GZipStream gzip = new(file, CompressionMode.Decompress);
             using StreamReader sr = new(gzip);
@@ -75,23 +76,27 @@ public static class GoldbachCometGap {
                 rangeEvenCounts[i] = uint.Parse(line);
             }
             
-            Console.Write($"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] read from disk.");
-            return true;
+            return $"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] read from disk.";
         }
-        
-        static void ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+
+        static string ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
             int pmax = primes.BinarySearch(rangeEnd >> 1);
             if (pmax < 0) pmax = ~pmax;
-            for(int pi = 1; pi < pmax; pi++) { // skip the first prime (2)
+            for (int pi = 1; pi < pmax; pi++) { // skip the first prime (2)
                 uint p = primes[pi];
-                int qi = rangeStart > p ? ~primes.BinarySearch(rangeStart - p - 1) : pi; // rangeStart is even, p is odd, so we subtract 1 to guarantee that we won't find it exactly
+                int qi = rangeStart > p
+                    ? ~primes.BinarySearch(rangeStart - p - 1)
+                    : pi; // rangeStart is even, p is odd, so we subtract 1 to guarantee that we won't find it exactly
                 if (qi < pi) qi = pi;
-                int qmax = ~primes.BinarySearch(rangeEnd - p); // rangeEnd is odd, p is odd, so we will not find it exactly
-                for (uint rsmp = rangeStart - p; qi < qmax; qi++) {
+                // rangeEnd is odd, p is odd, so we will not find it exactly
+                int qmax = ~primes.BinarySearch(rangeEnd - p); 
+                for (uint rsmp = rangeStart - p; qi < qmax; qi++)
                     rangeEvenCounts[(primes[qi] - rsmp) >> 1]++;
-                }
             }
-            
+            return WriteRange(rangeStart, rangeEnd, rangeEvenCounts);
+        }
+        
+        static string WriteRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
             using FileStream fs = new FileStream(FileNameForRange(rangeStart, rangeEnd), FileMode.Create,
                 FileAccess.Write,
                 FileShare.None);
@@ -99,15 +104,15 @@ public static class GoldbachCometGap {
             using StreamWriter sw = new(gz);
             foreach (uint evenCount in rangeEvenCounts)
                 sw.WriteLine(evenCount);
-            Console.Write($"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] computed and saved.");
+            return $"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] computed and saved.";
         }
 
         static (int, int, int) UpdateFound(List<bool> found, uint[] rangeEvenCounts, int prevFirstMissingCount) {
             lock (found) {
                 foreach (uint count in rangeEvenCounts) {
                     while (count > found.Count) found.Add(false);
-                    if (count == found.Count) found.Add(true);
-                    else found[(int)count] = true;
+                    if (count < found.Count) found[(int)count] = true;
+                    else found.Add(true);
                 }
             }
 
