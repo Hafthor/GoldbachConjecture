@@ -80,6 +80,10 @@ public static class GoldbachCometGap {
         }
 
         static string ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+            if (rangeStart == 0) {
+                rangeEvenCounts[1]++; // 4 can be expressed as 2+2, but we skip 2 since this is the only case using it.
+                rangeEvenCounts[0]--; // 4 would be counted as having zero combinations, so this adjusts it.
+            }
             int pmax = primes.BinarySearch(rangeEnd >> 1);
             if (pmax < 0) pmax = ~pmax;
             for (int pi = 1; pi < pmax; pi++) { // skip the first prime (2)
