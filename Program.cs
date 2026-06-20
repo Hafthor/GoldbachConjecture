@@ -1,5 +1,4 @@
 using GoldbachConjecture;
 
-//GoldbachCometGap.Execute();
-GoldbachCometGap.ExecuteNew();
+GoldbachCometGap.Execute();
 return 0;
