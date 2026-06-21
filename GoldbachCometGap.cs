@@ -19,28 +19,23 @@ public static class GoldbachCometGap {
         uint rangeStart = 0, rangeIncrement = 65536, ranges = 65536;
         List<bool> found = [];
         rangeStart -= rangeIncrement; // so that the first loop iteration starts at 0
-        Parallel.For(0, ranges, _ => {
-            uint[] rangeEvenCounts = ArrayPool<uint>.Shared.Rent((int)(rangeIncrement >> 1));
-            try {
-                Array.Clear(rangeEvenCounts);
-                uint rs = Interlocked.Add(ref rangeStart, rangeIncrement);
-                uint re = rs + rangeIncrement - 1;
-                string message = ReadRange(rs, re, rangeEvenCounts) ?? ComputeRange(primes, rs, re, rangeEvenCounts);
-                (int firstMissingCount, int nextMissingCount, int missingCount) =
-                    UpdateFound(found, rangeEvenCounts, 0);
-                double density = 1.0 - missingCount / ((double)found.Count - firstMissingCount);
-                Console.WriteLine(
-                    $"{message} First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
-            } finally {
-                ArrayPool<uint>.Shared.Return(rangeEvenCounts);
-            }
+        Parallel.For(0, ranges, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },_ => {
+            uint[] rangeEvenCounts = new uint[rangeIncrement >> 1];
+            uint rs = Interlocked.Add(ref rangeStart, rangeIncrement);
+            uint re = rs + rangeIncrement - 1;
+            string message = ReadRange(rs, re, rangeEvenCounts) ?? ComputeRange(primes, rs, re, rangeEvenCounts);
+            (int firstMissingCount, int nextMissingCount, int missingCount) =
+                UpdateFound(found, rangeEvenCounts, 0);
+            double density = 1.0 - missingCount / ((double)found.Count - firstMissingCount);
+            Console.WriteLine(
+                $"{message} First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
         });
         return;
         
         // returns all primes in the uint space
         static List<uint> GetPrimes() {
             Console.Write("Finding primes...");
-            List<uint> primes = [2];
+            List<uint> primes = new(203_280_221) { 2 };
             // uint.MaxValue is 4,294,967,295 which is composite
             // int.MaxValue is 2,147,483,647 (x2 + 1) = 4,294,967,295
             BitArray isOddComposite = new(int.MaxValue);
@@ -80,10 +75,6 @@ public static class GoldbachCometGap {
         }
 
         static string ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
-            if (rangeStart == 0) {
-                rangeEvenCounts[1]++; // 4 can be expressed as 2+2, but we skip 2 since this is the only case using it.
-                rangeEvenCounts[0]--; // 4 would be counted as having zero combinations, so this adjusts it.
-            }
             int pmax = primes.BinarySearch(rangeEnd >> 1);
             if (pmax < 0) pmax = ~pmax;
             for (int pi = 1; pi < pmax; pi++) { // skip the first prime (2)
@@ -97,6 +88,11 @@ public static class GoldbachCometGap {
                 for (uint rsmp = rangeStart - p; qi < qmax; qi++)
                     rangeEvenCounts[(primes[qi] - rsmp) >> 1]++;
             }
+
+            if (rangeStart == 0) {
+                rangeEvenCounts[2]++; // 4 can be expressed as 2+2, but we skip 2 since this is the only case using it.
+            }
+            
             return WriteRange(rangeStart, rangeEnd, rangeEvenCounts);
         }
         
