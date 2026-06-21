@@ -16,22 +16,29 @@ public static class GoldbachCometGap {
     /// </summary>
     public static void Execute() {
         List<uint> primes = GetPrimes();
-        uint rangeStart = 0, rangeIncrement = 65536, ranges = 65536;
         List<bool> found = [];
-        rangeStart -= rangeIncrement; // so that the first loop iteration starts at 0
-        Parallel.For(0, ranges, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },_ => {
+        uint rangeIncrement = 65536, ranges = 65536, rangeStart = unchecked(0 - rangeIncrement); // so that the first loop iteration starts at 0
+        int rangeIncrementBits = 16, increments = 0, maxIncrement = 0;
+        
+        Parallel.For(0, ranges, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, _ => {
             uint[] rangeEvenCounts = new uint[rangeIncrement >> 1];
             uint rs = Interlocked.Add(ref rangeStart, rangeIncrement);
             uint re = rs + rangeIncrement - 1;
             string message = ReadRange(rs, re, rangeEvenCounts) ?? ComputeRange(primes, rs, re, rangeEvenCounts);
-            (int firstMissingCount, int nextMissingCount, int missingCount) =
-                UpdateFound(found, rangeEvenCounts, 0);
+            bool incompleteRange;
+            int firstMissingCount, nextMissingCount, missingCount;
+            lock (found) {
+                maxIncrement = Math.Max(maxIncrement, (int)(rs >> rangeIncrementBits));
+                incompleteRange = increments++ < maxIncrement;
+                (firstMissingCount, nextMissingCount, missingCount) = UpdateFound(found, rangeEvenCounts, 0);
+            }
             double density = 1.0 - missingCount / ((double)found.Count - firstMissingCount);
             Console.WriteLine(
-                $"{message} First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
+                $"{(incompleteRange ? "* " : "")}{message} First missing count = {firstMissingCount:N0}, next = {nextMissingCount:N0}, highest count = {found.Count - 1:N0}, missing count = {missingCount:N0}, density = {density * 100:N2}%.");
         });
-        return;
         
+        return;
+
         // returns all primes in the uint space
         static List<uint> GetPrimes() {
             Console.Write("Finding primes...");
@@ -61,20 +68,22 @@ public static class GoldbachCometGap {
 
         static string ReadRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
             string fileName = FileNameForRange(rangeStart, rangeEnd);
-            if (!File.Exists(fileName)) return null;
+            if (!File.Exists(fileName))
+                return null;
+
             using FileStream file = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using GZipStream gzip = new(file, CompressionMode.Decompress);
             using StreamReader sr = new(gzip);
-            for (int i = 0; i < rangeEvenCounts.Length; i++) {
-                string line = sr.ReadLine();
-                if (line == null) break;
-                rangeEvenCounts[i] = uint.Parse(line);
-            }
-            
+            while (sr.ReadLine() is { } line)
+                rangeEvenCounts[rangeStart++] = uint.Parse(line);
+
             return $"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] read from disk.";
         }
 
         static string ComputeRange(List<uint> primes, uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
+            if (rangeStart == 0)
+                rangeEvenCounts[2]++; // 4 can be expressed as 2+2, but we skip 2 since this is the only case using it.
+
             int pmax = primes.BinarySearch(rangeEnd >> 1);
             if (pmax < 0) pmax = ~pmax;
             for (int pi = 1; pi < pmax; pi++) { // skip the first prime (2)
@@ -84,18 +93,14 @@ public static class GoldbachCometGap {
                     : pi; // rangeStart is even, p is odd, so we subtract 1 to guarantee that we won't find it exactly
                 if (qi < pi) qi = pi;
                 // rangeEnd is odd, p is odd, so we will not find it exactly
-                int qmax = ~primes.BinarySearch(rangeEnd - p); 
+                int qmax = ~primes.BinarySearch(rangeEnd - p);
                 for (uint rsmp = rangeStart - p; qi < qmax; qi++)
                     rangeEvenCounts[(primes[qi] - rsmp) >> 1]++;
             }
 
-            if (rangeStart == 0) {
-                rangeEvenCounts[2]++; // 4 can be expressed as 2+2, but we skip 2 since this is the only case using it.
-            }
-            
             return WriteRange(rangeStart, rangeEnd, rangeEvenCounts);
         }
-        
+
         static string WriteRange(uint rangeStart, uint rangeEnd, uint[] rangeEvenCounts) {
             using FileStream fs = new FileStream(FileNameForRange(rangeStart, rangeEnd), FileMode.Create,
                 FileAccess.Write,
@@ -104,27 +109,33 @@ public static class GoldbachCometGap {
             using StreamWriter sw = new(gz);
             foreach (uint evenCount in rangeEvenCounts)
                 sw.WriteLine(evenCount);
+
             return $"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] computed and saved.";
         }
 
         static (int, int, int) UpdateFound(List<bool> found, uint[] rangeEvenCounts, int prevFirstMissingCount) {
-            lock (found) {
-                foreach (uint count in rangeEvenCounts) {
-                    while (count > found.Count) found.Add(false);
-                    if (count < found.Count) found[(int)count] = true;
-                    else found.Add(true);
-                }
+            foreach (uint count in rangeEvenCounts) {
+                while (count > found.Count)
+                    found.Add(false);
+                
+                if (count < found.Count)
+                    found[(int)count] = true;
+                else
+                    found.Add(true);
             }
-
+            
             while (prevFirstMissingCount < found.Count && found[prevFirstMissingCount])
                 prevFirstMissingCount++;
+
             int nextMissingCount = prevFirstMissingCount + 1;
             while (nextMissingCount < found.Count && found[nextMissingCount])
                 nextMissingCount++;
+
             int missingCount = 1;
             for (int i = nextMissingCount; i < found.Count; i++)
                 if (!found[i])
                     missingCount++;
+
             return (prevFirstMissingCount, nextMissingCount, missingCount);
         }
     }
