@@ -80,8 +80,9 @@ public static class GoldbachCometGap {
         using FileStream file = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using GZipStream gzip = new(file, CompressionMode.Decompress);
         using StreamReader sr = new(gzip);
+        int index = 0;
         while (sr.ReadLine() is { } line)
-            rangeEvenCounts[rangeStart++] = uint.Parse(line);
+            rangeEvenCounts[index++] = uint.Parse(line);
 
         return $"Counts for range [{rangeStart:N0}...{rangeEnd:N0}] read from disk.";
     }
